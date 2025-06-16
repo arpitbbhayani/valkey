@@ -1190,6 +1190,7 @@ typedef struct client {
     int argc;            /* Num of arguments of current command. */
     int argv_len;        /* Size of argv array (may be more than argc) */
     size_t argv_len_sum; /* Sum of lengths of objects in argv list. */
+    uint64_t command_fingerprint;  /* Fingerprint of the command name and arguments */
     int reqtype;         /* Request protocol type: PROTO_REQ_* */
     int multibulklen;    /* Number of multi bulk arguments left to read. */
     long bulklen;        /* Length of bulk argument in multi bulk request. */

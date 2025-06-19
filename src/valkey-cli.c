@@ -1639,11 +1639,12 @@ static void resetConfig(void) {
  * in a much cleaner way.
  */
 void handshake(redisContext *ctx, uint64_t id, char * mode) {
-    char *name = malloc(64);
-    snprintf(name, 64, "%lu.%s", id, mode);
+    // convert int id to string
+    char *id_str = malloc(128);
+    snprintf(id_str, 128, "%lu", id);
 
-    char *get_argv[] = {"CLIENT", "SETNAME", name};
-    size_t get_argvlen[] = {6, 7, strlen(name)};
+    char *get_argv[] = {"HANDSHAKE", id_str, mode};
+    size_t get_argvlen[] = {9, strlen(id_str), strlen(mode)};
     redisAppendCommandArgv(ctx, 3, (const char **)get_argv, get_argvlen);
 
     redisReply *reply;
@@ -1653,7 +1654,7 @@ void handshake(redisContext *ctx, uint64_t id, char * mode) {
         sdsfree(formatted);
         freeReplyObject(reply);
     }
-    free(name);
+    free(id_str);
 }
 
 /* Connect to the server. It is possible to pass certain flags to the function:

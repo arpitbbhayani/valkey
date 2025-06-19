@@ -46,8 +46,11 @@ void watchClient(client *c, robj *key);
 
 // key to list of watched command fingerprints that depend on this key
 static dict *key_fingerprints = NULL;
-// command fingerprint to list of clients who are watching this command
-static dict *fingerprint_clients = NULL;
+// command fingerprint to list of client ids
+static dict *fingerprint_clientids = NULL;
+// client id to client object for command and watch modes
+static dict *clientid_client_command = NULL;
+static dict *clientid_client_watch = NULL;
 
 // TODO: This might not be the best way to maintain this map
 // as we are copying the SDS string into the dict.
@@ -95,9 +98,20 @@ dictType fingerprintClientDictType = {
     NULL                     /* allow to expand */
 };
 
-void initKeyWatchers(void) {
+dictType clientIdClientDictType = {
+    dictUint64Hash,          /* hash function */
+    dictUint64Dup,           /* key dup */
+    dictUint64KeyCompare,    /* key compare */
+    dictUint64Destructor,    /* key destructor */
+    NULL,                    /* val destructor */
+    NULL                     /* allow to expand */
+};
+
+void initWatchersDicts(void) {
     key_fingerprints = dictCreate(&keyFingerprintDictType);
-    fingerprint_clients = dictCreate(&fingerprintClientDictType);
+    fingerprint_clientids = dictCreate(&fingerprintClientDictType);
+    clientid_client_command = dictCreate(&clientIdClientDictType);
+    clientid_client_watch = dictCreate(&clientIdClientDictType);
 }
 
 // Add after other cleanup code
@@ -109,9 +123,17 @@ void cleanupKeyWatchers(void) {
         dictRelease(key_fingerprints);
         key_fingerprints = NULL;
     }
-    if (fingerprint_clients) {
-        dictRelease(fingerprint_clients);
-        fingerprint_clients = NULL;
+    if (fingerprint_clientids) {
+        dictRelease(fingerprint_clientids);
+        fingerprint_clientids = NULL;
+    }
+    if (clientid_client_command) {
+        dictRelease(clientid_client_command);
+        clientid_client_command = NULL;
+    }
+    if (clientid_client_watch) {
+        dictRelease(clientid_client_watch);
+        clientid_client_watch = NULL;
     }
 }
 
@@ -481,9 +503,50 @@ uint64_t getCommandFingerprint64(client *c) {
     return hash;
 }
 
+uint64_t getClientId(client *c) {
+    char *dot = strchr(c->name->ptr, '.');
+    if (dot) {
+        *dot = '\0';
+    }
+    return atoll(c->name->ptr);
+}
+
+void registerClient(client *c) {
+    if (!clientid_client_command || !clientid_client_watch) {
+        initWatchersDicts();
+    }
+
+    // TODO: Check the length of the arguments and raise
+    // an error in case of mismatch
+
+    char *id_str = c->argv[1]->ptr;
+    char *mode = c->argv[2]->ptr;
+    uint64_t cid = atoll(id_str);
+
+    if (strcmp(mode, "command") == 0) {
+        dictAdd(clientid_client_command, &cid, c);
+    } else if (strcmp(mode, "watch") == 0) {
+        dictAdd(clientid_client_watch, &cid, c);
+    }
+}
+
+void unregisterClient(client *c) {
+    char *dot = strchr(c->name->ptr, '.');
+    if (dot) {
+        *dot = '\0';
+    }
+    uint64_t cid = atoll(c->name->ptr);
+    char *mode = dot + 1;
+    if (strcmp(mode, "command") == 0) {
+        dictDelete(clientid_client_command, &cid);
+    } else if (strcmp(mode, "watch") == 0) {
+        dictDelete(clientid_client_watch, &cid);
+    }
+}
+
 void watchClient(client *c, robj *key) {
     if (!key_fingerprints) {
-        initKeyWatchers();
+        initWatchersDicts();
     }
 
     // Setting the fingerprint for the command
@@ -507,25 +570,25 @@ void watchClient(client *c, robj *key) {
     }
 
     // TODO: List is sub-optimal, this should be a map or set.
-    list *clients = dictFetchValue(fingerprint_clients, key->ptr);
-    if (!clients) {
-        clients = listCreate();
-        dictAdd(fingerprint_clients, &c->command_fingerprint, clients);
+    list *clientids = dictFetchValue(fingerprint_clientids, &c->command_fingerprint);
+    if (!clientids) {
+        clientids = listCreate();
+        dictAdd(fingerprint_clientids, &c->command_fingerprint, clientids);
     }
 
     // Commenting this code as the vars ln and li are re-declared.
     // Ideally the code should be removed once reactivity is implemented.
     // listNode *ln;
     // listIter li;
-    listRewind(clients, &li);
+    listRewind(clientids, &li);
     while ((ln = listNext(&li)) != NULL) {
         if (ln->value == c) break;
     }
     if (!ln) {
-        listAddNodeTail(clients, c);
+        listAddNodeTail(clientids, c);
     }
 
-    printf("Number of watchers to key %s: %ld\n", (char *) key->ptr, listLength(clients));
+    printf("Number of watchers to key %s: %ld\n", (char *) key->ptr, listLength(clientids));
 }
 
 int getGenericCommand(client *c) {
@@ -1173,18 +1236,25 @@ void getWatchCommand(client *c) {
     watchClient(c, key);
 }
 
+void handshakeCommand(client *c) {
+    registerClient(c);
+    addReply(c, shared.ok);
+}
+
 // TODO: This is not the most efficient way to remove a
 // client from the subscriptions. This can be optimized by a mile.
 void unwatchClientAll(client *c) {
-    if (!key_fingerprints && !fingerprint_clients) return;
+    if (!key_fingerprints && !fingerprint_clientids && !clientid_client_command && !clientid_client_watch) return;
+
+    unregisterClient(c);
 
     list *fingerprints_affected = listCreate();
 
     // Remove this client from fingerprint_clients
     // This goes through the entire dict in a brute-force manner
     // and deletes the instances of the client c from all the values (list) across all the keys
-    if (fingerprint_clients) {
-        dictIterator *di = dictGetIterator(fingerprint_clients);
+    if (fingerprint_clientids) {
+        dictIterator *di = dictGetIterator(fingerprint_clientids);
         dictEntry *de;
         list *fingerprints_to_delete = listCreate();
 
@@ -1212,7 +1282,7 @@ void unwatchClientAll(client *c) {
         listIter li;
         listRewind(fingerprints_to_delete, &li);
         while ((ln = listNext(&li)) != NULL) {
-            dictDelete(fingerprint_clients, ln->value);
+            dictDelete(fingerprint_clientids, ln->value);
         }
         listRelease(fingerprints_to_delete);
     }
@@ -1255,7 +1325,7 @@ void unwatchClientAll(client *c) {
 }
 
 void notifyWatchers(robj *key, robj *val) {
-    if (!key_fingerprints && !fingerprint_clients) return;
+    if (!key_fingerprints && !fingerprint_clientids) return;
 
     // From the key that got changed, find all the fingerprints of the commands that depend on this key
     if (key_fingerprints) {
@@ -1272,14 +1342,15 @@ void notifyWatchers(robj *key, robj *val) {
 
                 // TODO: Also add command execution basis fingerprint->command map
 
-                list *clients = dictFetchValue(fingerprint_clients, fingerprint);
-                if (clients) {
+                list *clientids = dictFetchValue(fingerprint_clientids, fingerprint);
+                if (clientids) {
                     listNode *ln;
                     listIter li;
-                    listRewind(clients, &li);
+                    listRewind(clientids, &li);
                     while ((ln = listNext(&li)) != NULL) {
-                        client *c = ln->value;
-                        printf("Notifying client %ld about key %s and value %s\n", c->id, (char *)key->ptr, (char *)val->ptr);
+                        uint64_t *cid = ln->value;
+                        client *c = dictFetchValue(clientid_client_watch, cid);
+                        printf("Notifying client %ld about key %s and value %s\n", *cid, (char *)key->ptr, (char *)val->ptr);
                         addReply(c, val);
                     }
                 }

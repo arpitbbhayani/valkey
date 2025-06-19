@@ -10560,6 +10560,21 @@ struct COMMAND_ARG GETSET_Args[] = {
 {MAKE_ARG("value",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
 };
 
+/********** HANDSHAKE ********************/
+
+#ifndef SKIP_CMD_HISTORY_TABLE
+#define HANDSHAKE_History NULL
+#endif
+
+#ifndef SKIP_CMD_TIPS_TABLE
+#define HANDSHAKE_Tips NULL
+#endif
+
+struct COMMAND_ARG HANDSHAKE_Args[] = {
+{MAKE_ARG("cid",ARG_TYPE_INTEGER,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+{MAKE_ARG("mode",ARG_TYPE_STRING,-1,NULL,NULL,NULL,CMD_ARG_NONE,0,NULL)},
+};
+
 /********** INCR ********************/
 
 #ifndef SKIP_CMD_HISTORY_TABLE
@@ -11290,6 +11305,7 @@ struct COMMAND_STRUCT serverCommandTable[] = {
 {MAKE_CMD("getex","Returns the string value of a key after setting its expiration time.","O(1)","6.2.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,GETEX_History,0,GETEX_Tips,0,getexCommand,-2,CMD_WRITE|CMD_FAST,ACL_CATEGORY_STRING,GETEX_Keyspecs,1,NULL,2),.args=GETEX_Args},
 {MAKE_CMD("getrange","Returns a substring of the string stored at a key.","O(N) where N is the length of the returned string. The complexity is ultimately determined by the returned length, but because creating a substring from an existing string is very cheap, it can be considered O(1) for small strings.","2.4.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,GETRANGE_History,0,GETRANGE_Tips,0,getrangeCommand,4,CMD_READONLY,ACL_CATEGORY_STRING,GETRANGE_Keyspecs,1,NULL,3),.args=GETRANGE_Args},
 {MAKE_CMD("getset","Returns the previous string value of a key after setting it to a new value.","O(1)","1.0.0",CMD_DOC_DEPRECATED,"`SET` with the `!GET` argument","6.2.0","string",COMMAND_GROUP_STRING,GETSET_History,0,GETSET_Tips,0,getsetCommand,3,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_STRING,GETSET_Keyspecs,1,NULL,2),.args=GETSET_Args},
+{MAKE_CMD("handshake","Sets up connection mode - command or watch","O(1)","8.1.0",CMD_DOC_NONE,NULL,NULL,"handshake",COMMAND_GROUP_GENERIC,HANDSHAKE_History,0,HANDSHAKE_Tips,0,handshakeCommand,3,CMD_DENYOOM|CMD_FAST,NULL,NULL,0,NULL,2),.args=HANDSHAKE_Args},
 {MAKE_CMD("incr","Increments the integer value of a key by one. Uses 0 as initial value if the key doesn't exist.","O(1)","1.0.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,INCR_History,0,INCR_Tips,0,incrCommand,2,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_STRING,INCR_Keyspecs,1,NULL,1),.args=INCR_Args},
 {MAKE_CMD("incrby","Increments the integer value of a key by a number. Uses 0 as initial value if the key doesn't exist.","O(1)","1.0.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,INCRBY_History,0,INCRBY_Tips,0,incrbyCommand,3,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_STRING,INCRBY_Keyspecs,1,NULL,2),.args=INCRBY_Args},
 {MAKE_CMD("incrbyfloat","Increment the floating point value of a key by a number. Uses 0 as initial value if the key doesn't exist.","O(1)","2.6.0",CMD_DOC_NONE,NULL,NULL,"string",COMMAND_GROUP_STRING,INCRBYFLOAT_History,0,INCRBYFLOAT_Tips,0,incrbyfloatCommand,3,CMD_WRITE|CMD_DENYOOM|CMD_FAST,ACL_CATEGORY_STRING,INCRBYFLOAT_Keyspecs,1,NULL,2),.args=INCRBYFLOAT_Args},

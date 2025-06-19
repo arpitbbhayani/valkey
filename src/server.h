@@ -3625,6 +3625,7 @@ void getCommand(client *c);
 void getWatchCommand(client *c);
 void getexCommand(client *c);
 void getdelCommand(client *c);
+void handshakeCommand(client *c);
 void delCommand(client *c);
 void unlinkCommand(client *c);
 void existsCommand(client *c);

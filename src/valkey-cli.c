@@ -176,6 +176,8 @@ int spectrum_palette_size;
 static int orig_termios_saved = 0;
 static struct termios orig_termios; /* To restore terminal at exit.*/
 
+static sds cliFormatReply(redisReply *reply, int mode, int verbatim);
+
 /* Dict Helpers */
 static uint64_t dictSdsHash(const void *key);
 static int dictSdsKeyCompare(const void *key1, const void *key2);
@@ -1624,6 +1626,36 @@ static void resetConfig(void) {
     config.watch_mode = 0;
 }
 
+/*
+ * handshake establishes the connection to the server as either
+ * a command connection or a watch connection.
+ * In this implementation, we follow the notion of setting the CLIENT.NAME
+ * and using the NAME ending as "command" or "watch", we identify the connection
+ *
+ * While the name itself if used as a unique identifier for the connection.
+ * Name will be in the format "id.command" or "id.watch".
+ *
+ * When we productionize it, we should certainly add another command called HANDSHAKE to do this
+ * in a much cleaner way.
+ */
+void handshake(redisContext *ctx, uint64_t id, char * mode) {
+    char *name = malloc(64);
+    snprintf(name, 64, "%lu.%s", id, mode);
+
+    char *get_argv[] = {"CLIENT", "SETNAME", name};
+    size_t get_argvlen[] = {6, 7, strlen(name)};
+    redisAppendCommandArgv(ctx, 3, (const char **)get_argv, get_argvlen);
+
+    redisReply *reply;
+    if (redisGetReply(ctx, (void **)&reply) == REDIS_OK) {
+        sds formatted = cliFormatReply(reply, config.output, 0);
+        // printf("%s", formatted);
+        sdsfree(formatted);
+        freeReplyObject(reply);
+    }
+    free(name);
+}
+
 /* Connect to the server. It is possible to pass certain flags to the function:
  *      CC_FORCE: The connection is performed even if there is already
  *                a connected socket.
@@ -1637,10 +1669,15 @@ static int cliConnect(int flags) {
             cliRefreshPrompt();
         }
 
+        // TODO: Change this random id to a more collision resistant id, like UUID
+        uint64_t cid = rand();
+
         /* Do not use hostsocket when we got redirected in cluster mode */
         if (config.hostsocket == NULL || (config.cluster_mode && config.cluster_reissue_command)) {
             context = redisConnectWrapper(config.conn_info.hostip, config.conn_info.hostport, config.connect_timeout, 0);
             context_watch = redisConnectWrapper(config.conn_info.hostip, config.conn_info.hostport, config.connect_timeout, 0);
+            handshake(context, cid, "command");
+            handshake(context_watch, cid, "watch");
         } else {
             // TODO: Do what we did with redisConnectWrapper
             context = redisConnectUnixWrapper(config.hostsocket, config.connect_timeout, 0);

@@ -1216,7 +1216,7 @@ void watchClient(client *c, robj *key) {
         dictAdd(fingerprint_clientids, &c->command_fingerprint, clientids);
     }
 
-    uint64_t client_id = c->wcid;
+    uint64_t wcid = c->wcid;
 
     // Commenting this code as the vars ln and li are re-declared.
     // Ideally the code should be removed once reactivity is implemented.
@@ -1224,13 +1224,14 @@ void watchClient(client *c, robj *key) {
     // listIter li;
     listRewind(clientids, &li);
     while ((ln = listNext(&li)) != NULL) {
-        if (*((uint64_t *)ln->value) == client_id) break;
+        if (*((uint64_t *)ln->value) == wcid) break;
     }
     if (!ln) {
-        listAddNodeTail(clientids, &client_id);
+        // TODO: make sure this is freed when the client is unsubscribed
+        uint64_t *wcid_ptr = zmalloc(sizeof(uint64_t));
+        *wcid_ptr = wcid;
+        listAddNodeTail(clientids, wcid_ptr);
     }
-
-    printf("Number of clients watching the fingerprint %s: %ld\n", (char *) key->ptr, listLength(clientids));
 }
 
 // TODO: This is not the most efficient way to remove a
@@ -1318,33 +1319,29 @@ void unwatchClientAll(client *c) {
 
 void notifyWatchers(robj *key, robj *val) {
     // From the key that got changed, find all the fingerprints of the commands that depend on this key
-    if (key_fingerprints) {
-        list *fingerprints = dictFetchValue(key_fingerprints, key->ptr);
-        if (fingerprints) {
-            listNode *ln;
-            listIter li;
-            listRewind(fingerprints, &li);
-            while ((ln = listNext(&li)) != NULL) {
-                uint64_t *fingerprint = ln->value;
+    if (!key_fingerprints) return;
 
-                // For this fingerprint, find all the clients that are watching this fingerprint
-                // and send them the new value
+    list *fingerprints = dictFetchValue(key_fingerprints, key->ptr);
+    if (!fingerprints) return;
 
-                // TODO: Also add command execution basis fingerprint->command map
+    listNode *ln;
+    listIter li;
+    listRewind(fingerprints, &li);
+    while ((ln = listNext(&li)) != NULL) {
+        uint64_t *fingerprint = ln->value;
 
-                list *clientids = dictFetchValue(fingerprint_clientids, fingerprint);
-                if (clientids) {
-                    listNode *ln;
-                    listIter li;
-                    listRewind(clientids, &li);
-                    while ((ln = listNext(&li)) != NULL) {
-                        uint64_t *cid = ln->value;
-                        client *c = dictFetchValue(clientid_client_watch, cid);
-                        printf("Notifying client %ld about key %s and value %s\n", *cid, (char *)key->ptr, (char *)val->ptr);
-                        addReply(c, val);
-                    }
-                }
-            }
+        // TODO: Also add command execution basis fingerprint->command map
+
+        list *clientids = dictFetchValue(fingerprint_clientids, fingerprint);
+        if (!clientids) continue;
+
+        listNode *ln2;
+        listIter li2;
+        listRewind(clientids, &li2);
+        while ((ln2 = listNext(&li2)) != NULL) {
+            uint64_t *cid = ln2->value;
+            client *c = dictFetchValue(clientid_client_watch, cid);
+            addReply(c, val);
         }
     }
 }

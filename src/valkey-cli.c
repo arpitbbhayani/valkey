@@ -1639,7 +1639,7 @@ static void resetConfig(void) {
  * in a much cleaner way.
  */
 void handshake(redisContext *ctx, uint64_t id, char * mode) {
-    // convert int id to string
+    printf("CLIENT ID: %lu\n", id);
     char *id_str = malloc(128);
     snprintf(id_str, 128, "%lu", id);
 
@@ -1671,6 +1671,8 @@ static int cliConnect(int flags) {
         }
 
         // TODO: Change this random id to a more collision resistant id, like UUID
+        // move this srand function to once in the main function
+        srand(time(NULL) ^ getpid());
         uint64_t cid = rand();
 
         /* Do not use hostsocket when we got redirected in cluster mode */

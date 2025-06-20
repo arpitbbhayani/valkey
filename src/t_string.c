@@ -108,10 +108,18 @@ dictType clientIdClientDictType = {
 };
 
 void initWatchersDicts(void) {
-    key_fingerprints = dictCreate(&keyFingerprintDictType);
-    fingerprint_clientids = dictCreate(&fingerprintClientDictType);
-    clientid_client_command = dictCreate(&clientIdClientDictType);
-    clientid_client_watch = dictCreate(&clientIdClientDictType);
+    if (!key_fingerprints) {
+        key_fingerprints = dictCreate(&keyFingerprintDictType);
+    }
+    if (!fingerprint_clientids) {
+        fingerprint_clientids = dictCreate(&fingerprintClientDictType);
+    }
+    if (!clientid_client_command) {
+        clientid_client_command = dictCreate(&clientIdClientDictType);
+    }
+    if (!clientid_client_watch) {
+        clientid_client_watch = dictCreate(&clientIdClientDictType);
+    }
 }
 
 // Add after other cleanup code
@@ -503,18 +511,8 @@ uint64_t getCommandFingerprint64(client *c) {
     return hash;
 }
 
-uint64_t getClientId(client *c) {
-    char *dot = strchr(c->name->ptr, '.');
-    if (dot) {
-        *dot = '\0';
-    }
-    return atoll(c->name->ptr);
-}
-
 void registerClient(client *c) {
-    if (!clientid_client_command || !clientid_client_watch) {
-        initWatchersDicts();
-    }
+    initWatchersDicts();
 
     // TODO: Check the length of the arguments and raise
     // an error in case of mismatch
@@ -523,72 +521,19 @@ void registerClient(client *c) {
     char *mode = c->argv[2]->ptr;
     uint64_t cid = atoll(id_str);
 
+    c->wcid = cid;
     if (strcmp(mode, "command") == 0) {
+        c->mode = 0;
         dictAdd(clientid_client_command, &cid, c);
     } else if (strcmp(mode, "watch") == 0) {
+        c->mode = 1;
         dictAdd(clientid_client_watch, &cid, c);
     }
 }
 
 void unregisterClient(client *c) {
-    char *dot = strchr(c->name->ptr, '.');
-    if (dot) {
-        *dot = '\0';
-    }
-    uint64_t cid = atoll(c->name->ptr);
-    char *mode = dot + 1;
-    if (strcmp(mode, "command") == 0) {
-        dictDelete(clientid_client_command, &cid);
-    } else if (strcmp(mode, "watch") == 0) {
-        dictDelete(clientid_client_watch, &cid);
-    }
-}
-
-void watchClient(client *c, robj *key) {
-    if (!key_fingerprints) {
-        initWatchersDicts();
-    }
-
-    // Setting the fingerprint for the command
-    c->command_fingerprint = getCommandFingerprint64(c);
-
-    // TODO: List is sub-optimal, this should be a map or set.
-    list *fingerprints = dictFetchValue(key_fingerprints, key->ptr);
-    if (!fingerprints) {
-        fingerprints = listCreate();
-        dictAdd(key_fingerprints, key->ptr, fingerprints);
-    }
-
-    listNode *ln;
-    listIter li;
-    listRewind(fingerprints, &li);
-    while ((ln = listNext(&li)) != NULL) {
-        if (ln->value == &c->command_fingerprint) break;
-    }
-    if (!ln) {
-        listAddNodeTail(fingerprints, &c->command_fingerprint);
-    }
-
-    // TODO: List is sub-optimal, this should be a map or set.
-    list *clientids = dictFetchValue(fingerprint_clientids, &c->command_fingerprint);
-    if (!clientids) {
-        clientids = listCreate();
-        dictAdd(fingerprint_clientids, &c->command_fingerprint, clientids);
-    }
-
-    // Commenting this code as the vars ln and li are re-declared.
-    // Ideally the code should be removed once reactivity is implemented.
-    // listNode *ln;
-    // listIter li;
-    listRewind(clientids, &li);
-    while ((ln = listNext(&li)) != NULL) {
-        if (ln->value == c) break;
-    }
-    if (!ln) {
-        listAddNodeTail(clientids, c);
-    }
-
-    printf("Number of watchers to key %s: %ld\n", (char *) key->ptr, listLength(clientids));
+    dictDelete(clientid_client_command, &c->wcid);
+    dictDelete(clientid_client_watch, &c->wcid);
 }
 
 int getGenericCommand(client *c) {
@@ -1241,6 +1186,53 @@ void handshakeCommand(client *c) {
     addReply(c, shared.ok);
 }
 
+void watchClient(client *c, robj *key) {
+    initWatchersDicts();
+
+    // Setting the fingerprint for the command
+    c->command_fingerprint = getCommandFingerprint64(c);
+
+    // TODO: List is sub-optimal, this should be a map or set.
+    list *fingerprints = dictFetchValue(key_fingerprints, key->ptr);
+    if (!fingerprints) {
+        fingerprints = listCreate();
+        dictAdd(key_fingerprints, key->ptr, fingerprints);
+    }
+
+    listNode *ln;
+    listIter li;
+    listRewind(fingerprints, &li);
+    while ((ln = listNext(&li)) != NULL) {
+        if (*((uint64_t *)ln->value) == c->command_fingerprint) break;
+    }
+    if (!ln) {
+        listAddNodeTail(fingerprints, &c->command_fingerprint);
+    }
+
+    // TODO: List is sub-optimal, this should be a map or set.
+    list *clientids = dictFetchValue(fingerprint_clientids, &c->command_fingerprint);
+    if (!clientids) {
+        clientids = listCreate();
+        dictAdd(fingerprint_clientids, &c->command_fingerprint, clientids);
+    }
+
+    uint64_t client_id = c->wcid;
+
+    // Commenting this code as the vars ln and li are re-declared.
+    // Ideally the code should be removed once reactivity is implemented.
+    // listNode *ln;
+    // listIter li;
+    listRewind(clientids, &li);
+    while ((ln = listNext(&li)) != NULL) {
+        if (*((uint64_t *)ln->value) == client_id) break;
+    }
+    if (!ln) {
+        listAddNodeTail(clientids, &client_id);
+    }
+
+    printf("Number of clients watching the fingerprint %s: %ld\n", (char *) key->ptr, listLength(clientids));
+}
+
 // TODO: This is not the most efficient way to remove a
 // client from the subscriptions. This can be optimized by a mile.
 void unwatchClientAll(client *c) {
@@ -1325,8 +1317,6 @@ void unwatchClientAll(client *c) {
 }
 
 void notifyWatchers(robj *key, robj *val) {
-    if (!key_fingerprints && !fingerprint_clientids) return;
-
     // From the key that got changed, find all the fingerprints of the commands that depend on this key
     if (key_fingerprints) {
         list *fingerprints = dictFetchValue(key_fingerprints, key->ptr);

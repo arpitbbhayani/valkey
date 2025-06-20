@@ -1275,6 +1275,9 @@ typedef struct client {
     list *deferred_reply;                    /* List of reply objects to be sent to the client, typically after
                                                 the client has been unblocked. */
     unsigned long long deferred_reply_bytes; /* Total bytes of objects in the blocked client pending list.*/
+
+    uint64_t wcid;
+    uint8_t mode;
 #ifdef LOG_REQ_RES
     clientReqResInfo reqres;
 #endif
